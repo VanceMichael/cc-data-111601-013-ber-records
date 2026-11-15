@@ -1,0 +1,30 @@
+{
+  "catalog": {
+    "entry": "/stream",
+    "schema": "/schema",
+    "resources": [
+      "/primary",
+      "/stream",
+      "/damaged"
+    ]
+  },
+  "resources": {
+    "/primary": {
+      "file": "primary.bin",
+      "type": "application/octet-stream"
+    },
+    "/stream": {
+      "file": "resource-01.bin",
+      "type": "application/octet-stream",
+      "chunkSize": 1
+    },
+    "/damaged": {
+      "file": "resource-02.bin",
+      "type": "application/octet-stream"
+    },
+    "/schema": {
+      "file": "resource-03.bin",
+      "type": "application/json"
+    }
+  }
+}

@@ -1,0 +1,1 @@
+{"record":{"class":0,"tag":16,"constructed":true},"known":[{"path":[16,2],"name":"recordId","type":"INTEGER"},{"path":[16,4],"name":"payload","type":"OCTET STRING"}],"extensions":"preserve-tlv"}
