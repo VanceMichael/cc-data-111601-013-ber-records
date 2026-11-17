@@ -2,7 +2,19 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { Store } from './store.mjs';
 import { acquire } from './transport.mjs';
-import { inspect } from './reader.mjs';
+import { inspect, BerStreamParser } from './reader.mjs';
+import { normalizeSchema, summarizeStream } from './schema.mjs';
+
+async function readJson(request) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of request) {
+    length += chunk.length;
+    if (length > 16384) throw new Error('request_too_large');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString());
+}
 
 export async function startService({ source, directory, port = 0 }) {
   const store = await new Store(directory).initialize();
@@ -17,16 +29,26 @@ export async function startService({ source, directory, port = 0 }) {
         return response.end(await store.object(url.pathname.slice(9)));
       }
       if (url.pathname === '/intakes' && request.method === 'POST') {
-        const chunks = []; let length = 0;
-        for await (const chunk of request) {
-          length += chunk.length;
-          if (length > 16384) throw new Error('request_too_large');
-          chunks.push(chunk);
-        }
-        const payload = JSON.parse(Buffer.concat(chunks).toString());
+        const payload = await readJson(request);
         if (typeof payload.path !== 'string') throw new Error('path_required');
         const result = await acquire(source, payload.path);
         const parsed = inspect(result.bytes);
+        const record = await store.accept(result.bytes, new URL(payload.path, source).href, parsed);
+        response.statusCode = 201;
+        return response.end(JSON.stringify(record));
+      }
+      if (url.pathname === '/streams' && request.method === 'POST') {
+        const payload = await readJson(request);
+        if (typeof payload.path !== 'string') throw new Error('path_required');
+        let schema = null;
+        if (typeof payload.schema === 'string') {
+          const document = await acquire(source, payload.schema);
+          schema = normalizeSchema(JSON.parse(document.bytes.toString('utf8')));
+        }
+        const parser = new BerStreamParser();
+        const result = await acquire(source, payload.path, { onChunk: chunk => parser.push(chunk) });
+        const outcome = parser.finish();
+        const parsed = summarizeStream(outcome, schema, result.bytes);
         const record = await store.accept(result.bytes, new URL(payload.path, source).href, parsed);
         response.statusCode = 201;
         return response.end(JSON.stringify(record));

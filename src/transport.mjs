@@ -1,4 +1,4 @@
-export async function acquire(base, path, headers = {}) {
+export async function acquire(base, path, { headers = {}, onChunk } = {}) {
   const origin = new URL(base);
   const target = new URL(path, origin);
   if (target.origin !== origin.origin) throw new Error('outside_source');
@@ -9,7 +9,9 @@ export async function acquire(base, path, headers = {}) {
   for await (const chunk of response.body) {
     size += chunk.length;
     if (size > 8 * 1024 * 1024) throw new Error('source_too_large');
-    chunks.push(Buffer.from(chunk));
+    const part = Buffer.from(chunk);
+    chunks.push(part);
+    if (onChunk) onChunk(part);
   }
   return { bytes: Buffer.concat(chunks), headers: Object.fromEntries(response.headers), status: response.status };
 }
