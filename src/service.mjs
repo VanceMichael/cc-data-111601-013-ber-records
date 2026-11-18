@@ -3,7 +3,19 @@ import { fileURLToPath } from 'node:url';
 import { Store } from './store.mjs';
 import { acquire } from './transport.mjs';
 import { inspect } from './reader.mjs';
+import { receiveDelivery } from './delivery.mjs';
 import { startProvider } from './provider.mjs';
+
+async function readJson(request) {
+  const chunks = [];
+  let length = 0;
+  for await (const chunk of request) {
+    length += chunk.length;
+    if (length > 16384) throw new Error('request_too_large');
+    chunks.push(chunk);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString());
+}
 
 export async function startService({ source, directory, port = 0 }) {
   const store = await new Store(directory).initialize();
@@ -17,14 +29,28 @@ export async function startService({ source, directory, port = 0 }) {
         response.setHeader('Content-Type', 'application/octet-stream');
         return response.end(await store.object(url.pathname.slice(9)));
       }
-      if (url.pathname === '/intakes' && request.method === 'POST') {
-        const chunks = []; let length = 0;
-        for await (const chunk of request) {
-          length += chunk.length;
-          if (length > 16384) throw new Error('request_too_large');
-          chunks.push(chunk);
+      if (url.pathname === '/deliveries' && request.method === 'GET') {
+        return response.end(JSON.stringify(await store.listDeliveries()));
+      }
+      const deliveryMatch = /^\/deliveries\/([0-9a-f-]{36})$/.exec(url.pathname);
+      if (deliveryMatch && request.method === 'GET') {
+        const delivery = (await store.listDeliveries()).find(entry => entry.id === deliveryMatch[1]);
+        if (!delivery) { response.writeHead(404); return response.end(JSON.stringify({ error: 'not_found' })); }
+        return response.end(JSON.stringify(delivery));
+      }
+      if (url.pathname === '/deliveries' && request.method === 'POST') {
+        const payload = await readJson(request);
+        if (typeof payload.path !== 'string') throw new Error('path_required');
+        if (payload.schema !== undefined && payload.schema !== null && typeof payload.schema !== 'string') {
+          throw new Error('schema_invalid');
         }
-        const payload = JSON.parse(Buffer.concat(chunks).toString());
+        const { entry, bytes } = await receiveDelivery(source, payload.path, { schema: payload.schema });
+        const stored = await store.acceptDelivery(entry, bytes);
+        response.statusCode = 201;
+        return response.end(JSON.stringify(stored));
+      }
+      if (url.pathname === '/intakes' && request.method === 'POST') {
+        const payload = await readJson(request);
         if (typeof payload.path !== 'string') throw new Error('path_required');
         const result = await acquire(source, payload.path);
         const parsed = inspect(result.bytes);

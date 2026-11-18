@@ -13,15 +13,28 @@ export class Store {
       if (error.code !== 'ENOENT') throw error;
       await this.saveIndex([]);
     }
+    try { await this.listDeliveries(); } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      await this.saveDeliveries([]);
+    }
     return this;
   }
   async saveIndex(records) {
-    const temporary = join(this.directory, `index-${randomUUID()}.tmp`);
-    await writeFile(temporary, JSON.stringify(records));
-    await rename(temporary, join(this.directory, 'index.json'));
+    await this.saveJson('index.json', records);
+  }
+  async saveDeliveries(deliveries) {
+    await this.saveJson('deliveries.json', deliveries);
+  }
+  async saveJson(name, value) {
+    const temporary = join(this.directory, `${name}-${randomUUID()}.tmp`);
+    await writeFile(temporary, JSON.stringify(value));
+    await rename(temporary, join(this.directory, name));
   }
   async list() {
     return JSON.parse(await readFile(join(this.directory, 'index.json'), 'utf8'));
+  }
+  async listDeliveries() {
+    return JSON.parse(await readFile(join(this.directory, 'deliveries.json'), 'utf8'));
   }
   async accept(bytes, source, parsed) {
     const digest = createHash('sha256').update(bytes).digest('hex');
@@ -34,6 +47,23 @@ export class Store {
       records.push(record);
       await this.saveIndex(records);
       return record;
+    });
+    this.pending = operation.catch(() => {});
+    return operation;
+  }
+  async acceptDelivery(entry, bytes) {
+    const digest = createHash('sha256').update(bytes).digest('hex');
+    const operation = this.pending.then(async () => {
+      const deliveries = await this.listDeliveries();
+      const existing = deliveries.find(delivery => delivery.digest === digest
+        && delivery.source === entry.source
+        && (delivery.schema?.path ?? null) === (entry.schema?.path ?? null));
+      if (existing) return existing;
+      await writeFile(join(this.directory, 'objects', digest), bytes);
+      const stored = { id: randomUUID(), digest, ...entry };
+      deliveries.push(stored);
+      await this.saveDeliveries(deliveries);
+      return stored;
     });
     this.pending = operation.catch(() => {});
     return operation;
